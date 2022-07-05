@@ -1138,34 +1138,31 @@ app.post(
         return res.status(400).type("text").send("bad request body");
       }
 
-      await db.beginTransaction();
-
       const [[{ cnt }]] = await db.query<(RowDataPacket & { cnt: number })[]>(
         "SELECT COUNT(*) AS `cnt` FROM `isu` WHERE `jia_isu_uuid` = ?",
         [jiaIsuUUID]
       );
       if (cnt === 0) {
-        await db.rollback();
         return res.status(404).type("text").send("not found: isu");
       }
 
+      const parameters = [];
       for (const cond of request) {
         const timestamp = new Date(cond.timestamp * 1000);
 
         if (!isValidConditionFormat(cond.condition)) {
-          await db.rollback();
           return res.status(400).type("text").send("bad request body");
         }
 
-        await db.query(
-          "INSERT INTO `isu_condition`" +
-            "	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)" +
-            "	VALUES (?, ?, ?, ?, ?)",
-          [jiaIsuUUID, timestamp, cond.is_sitting, cond.condition, cond.message]
-        );
+        parameters.push([jiaIsuUUID, timestamp, cond.is_sitting, cond.condition, cond.message])
       }
 
-      await db.commit();
+      const query = 
+          "INSERT INTO `isu_condition`" +
+          "	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)" +
+          "	VALUES " +
+          (new Array(parameters.length)).fill("(?, ?, ?, ?, ?)").join(', ');
+      await db.query(query, parameters);
 
       return res.status(202).send();
     } catch (err) {
