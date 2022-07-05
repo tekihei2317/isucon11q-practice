@@ -18,7 +18,7 @@ bench:
 	echo '' | sudo tee /var/log/mysql/mariadb-slow.log > /dev/null
 	cd ../bench && ./bench -all-addresses 127.0.0.11 -target 127.0.0.11:443 -tls -jia-service-url http://127.0.0.1:4999
 	@make alp
-	@mysqldumpslow
+	@make mysqldumpslow
 
 ALPSORT=sum
 ALPM="/api/isu/.+/icon,/api/isu/.+/graph,/api/isu/.+/condition,/api/isu/[-a-z0-9]+,/api/condition/[-a-z0-9]+,/api/catalog/.+,/api/condition\?,/isu/........-....-.+"
