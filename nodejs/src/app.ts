@@ -1160,9 +1160,9 @@ app.post(
       const query = 
           "INSERT INTO `isu_condition`" +
           "	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)" +
-          "	VALUES " +
-          (new Array(parameters.length)).fill("(?, ?, ?, ?, ?)").join(', ');
-      await db.query(query, parameters);
+          "	VALUES ?"
+      
+      await db.query(query, [parameters]);
 
       return res.status(202).send();
     } catch (err) {
