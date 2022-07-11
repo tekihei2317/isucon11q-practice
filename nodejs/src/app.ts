@@ -456,7 +456,7 @@ app.post(
             "INSERT INTO `isu` (`jia_isu_uuid`, `name`, `image`, `jia_user_id`) VALUES (?, ?, ?, ?)",
             [jiaIsuUUID, isuName, image, jiaUserId]
           );
-        } catch (err) {
+        } catch (err: any) {
           await db.rollback();
           if (err.errno === mysqlErrNumDuplicateEntry) {
             return res.status(409).type("text").send("duplicated: isu");
@@ -1014,9 +1014,119 @@ function calculateConditionLevel(condition: string): [string, Error?] {
   return [conditionLevel, undefined];
 }
 
+app.get("/api/test", async (req, res) => {
+  const db = await pool.getConnection();
+  try {
+    const [isuList] = await db.query<
+      (RowDataPacket & { character: string })[]
+    >("SELECT isu.*, isu_condition.condition, max(isucondition.timestamp) FROM `isu` LEFT JOIN `isu_condition` ON `isu_condition.jia_isu_uuid` = `isu.jia_isu_uuid`");
+
+    const trendResponse: TrendResponse[] = [];
+
+    let trendArray: { [key: string]: TrendCondition[] } = {};
+
+    for( const isu of isuList) {
+      const [conditionLevel, err] = calculateConditionLevel(
+        isu.condition
+      );
+      const trendCondition: TrendCondition = {
+        isu_id: isu.id,
+        timestamp: isu.timestamp.getTime() / 1000,
+      };
+      switch (conditionLevel) {
+        case "info":
+          trendArray[isu.character].push(trendCondition);
+          break;
+        case "warning":
+          trendArray[isu.character].push(trendCondition);
+          break;
+        case "critical":
+          trendArray[isu.character].push(trendCondition);
+          break;
+      }
+    }
+  } catch (err) {
+    console.error(`db error: ${err}`);
+    return res.status(500).send();
+  } finally {
+    db.release();
+  }
+})
+
+app.get("/api/trend", async (req, res) => {
+  const db = await pool.getConnection();
+  try {
+    const [characterList] = await db.query<
+      (RowDataPacket & { character: string })[]
+    >("SELECT `character` FROM `isu` GROUP BY `character`");
+
+    const trendResponse: TrendResponse[] = [];
+
+    for (const character of characterList) {
+      type IsuConditionAndTimestamp = {
+        isu_id: number,
+        character: string,
+        condition: string,
+        timestamp: Date, 
+      };
+      const [isuConditionList] = await db.query<(RowDataPacket & IsuConditionAndTimestamp)[]>(
+        "SELECT isu.id, LC.timestamp, IC.condition FROM `isu`" +
+        " inner join (select jia_isu_uuid, max(timestamp) as timestamp from isu_condition group by jia_isu_uuid) LC on isu.jia_isu_uuid = LC.jia_isu_uuid" +
+        " inner join isu_condition IC on LC.jia_isu_uuid = IC.jia_isu_uuid and LC.timestamp = IC.timestamp" +
+        " WHERE `character` = ?",
+        [character.character]
+      );
+
+      const characterInfoIsuConditions = [];
+      const characterWarningIsuConditions = [];
+      const characterCriticalIsuConditions = [];
+      for (const isuCondition of isuConditionList) {
+        const [conditionLevel, err] = calculateConditionLevel(
+          isuCondition.condition
+        );
+        if (err) {
+          console.error(err);
+          return res.status(500).send();
+        }
+        const trendCondition: TrendCondition = {
+          isu_id: isuCondition.id,
+          timestamp: isuCondition.timestamp.getTime() / 1000,
+        };
+        switch (conditionLevel) {
+          case "info":
+            characterInfoIsuConditions.push(trendCondition);
+            break;
+          case "warning":
+            characterWarningIsuConditions.push(trendCondition);
+            break;
+          case "critical":
+            characterCriticalIsuConditions.push(trendCondition);
+            break;
+      }
+      }
+
+      characterInfoIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
+      characterWarningIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
+      characterCriticalIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
+      trendResponse.push({
+        character: character.character,
+        info: characterInfoIsuConditions,
+        warning: characterWarningIsuConditions,
+        critical: characterCriticalIsuConditions,
+      });
+    }
+
+    return res.status(200).json(trendResponse);
+  } catch (err) {
+    console.error(`db error: ${err}`);
+    return res.status(500).send();
+  } finally {
+    db.release();
+  }
+});
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
-app.get("/api/trend", async (req, res) => {
+app.get("/api/trend_backup", async (req, res) => {
   const db = await pool.getConnection();
   try {
     const [characterList] = await db.query<
@@ -1077,6 +1187,8 @@ app.get("/api/trend", async (req, res) => {
         critical: characterCriticalIsuConditions,
       });
     }
+
+    trendResponse.sort((a, b) => a.character < b.character ? -1 : 1);
 
     return res.status(200).json(trendResponse);
   } catch (err) {
