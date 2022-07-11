@@ -1056,65 +1056,57 @@ app.get("/api/test", async (req, res) => {
 app.get("/api/trend", async (req, res) => {
   const db = await pool.getConnection();
   try {
+    type IsuConditionAndTimestamp = {
+      isu_id: number,
+      character: string,
+      condition: string,
+      timestamp: Date, 
+    };
+
     const [characterList] = await db.query<
       (RowDataPacket & { character: string })[]
     >("SELECT `character` FROM `isu` GROUP BY `character`");
 
-    const trendResponse: TrendResponse[] = [];
+    const conditionsByCharacter: { [character: string]: { [status: string]: TrendCondition[] } } = {};
+    characterList.forEach((character) => {
+      conditionsByCharacter[character.character] = {
+        info: [],
+        warning: [],
+        critical: []
+      }
+    })
 
-    for (const character of characterList) {
-      type IsuConditionAndTimestamp = {
-        isu_id: number,
-        character: string,
-        condition: string,
-        timestamp: Date, 
-      };
-      const [isuConditionList] = await db.query<(RowDataPacket & IsuConditionAndTimestamp)[]>(
-        "SELECT isu.id, LC.timestamp, IC.condition FROM `isu`" +
-        " inner join (select jia_isu_uuid, max(timestamp) as timestamp from isu_condition group by jia_isu_uuid) LC on isu.jia_isu_uuid = LC.jia_isu_uuid" +
-        " inner join isu_condition IC on LC.jia_isu_uuid = IC.jia_isu_uuid and LC.timestamp = IC.timestamp" +
-        " WHERE `character` = ?",
-        [character.character]
+    const [isuConditionList] = await db.query<(RowDataPacket & IsuConditionAndTimestamp)[]>(
+      "SELECT isu.id, isu.character, LC.timestamp, IC.condition FROM `isu`" +
+      " inner join (select jia_isu_uuid, max(timestamp) as timestamp from isu_condition group by jia_isu_uuid) LC on isu.jia_isu_uuid = LC.jia_isu_uuid" +
+      " inner join isu_condition IC on LC.jia_isu_uuid = IC.jia_isu_uuid and LC.timestamp = IC.timestamp" +
+      " order by LC.timestamp desc"
+    );
+
+    for (const isuCondition of isuConditionList) {
+      const [conditionLevel, err] = calculateConditionLevel(
+        isuCondition.condition
       );
-
-      const characterInfoIsuConditions = [];
-      const characterWarningIsuConditions = [];
-      const characterCriticalIsuConditions = [];
-      for (const isuCondition of isuConditionList) {
-        const [conditionLevel, err] = calculateConditionLevel(
-          isuCondition.condition
-        );
-        if (err) {
-          console.error(err);
-          return res.status(500).send();
-        }
-        const trendCondition: TrendCondition = {
-          isu_id: isuCondition.id,
-          timestamp: isuCondition.timestamp.getTime() / 1000,
-        };
-        switch (conditionLevel) {
-          case "info":
-            characterInfoIsuConditions.push(trendCondition);
-            break;
-          case "warning":
-            characterWarningIsuConditions.push(trendCondition);
-            break;
-          case "critical":
-            characterCriticalIsuConditions.push(trendCondition);
-            break;
+      if (err) {
+        console.error(err);
+        return res.status(500).send();
       }
-      }
+      const trendCondition: TrendCondition = {
+        isu_id: isuCondition.id,
+        timestamp: isuCondition.timestamp.getTime() / 1000,
+      };
 
-      characterInfoIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
-      characterWarningIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
-      characterCriticalIsuConditions.sort((a, b) => b.timestamp - a.timestamp);
-      trendResponse.push({
-        character: character.character,
-        info: characterInfoIsuConditions,
-        warning: characterWarningIsuConditions,
-        critical: characterCriticalIsuConditions,
-      });
+      conditionsByCharacter[isuCondition.character][conditionLevel].push(trendCondition);
     }
+
+    const trendResponse: TrendResponse[] = Object.entries(conditionsByCharacter).map(([character, conditions]) => {
+      return {
+        character,
+        info: conditions.info,
+        warning: conditions.warning,
+        critical: conditions.critical,
+      }
+    });
 
     return res.status(200).json(trendResponse);
   } catch (err) {
